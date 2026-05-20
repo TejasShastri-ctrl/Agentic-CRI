@@ -8,7 +8,6 @@ dotenv.config();
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-// Using the exact schema from SATT.pdf Component 2 Layer 2
 const schema = {
   type: Type.OBJECT,
   properties: {
@@ -37,12 +36,12 @@ const schema = {
 export async function startEmailProcessor() {
   const boss = await getBoss();
 
-  await boss.work('email-classification', { teamSize: 5, teamConcurrency: 2 }, async (job) => {
+  await boss.work('email-classification', { teamSize: 1, teamConcurrency: 1 }, async (job) => {
     const { emailId } = job.data;
     const client = await pool.connect();
 
     try {
-      // 1. Fetch Email and Thread Context
+      // email and thread context
       const emailRes = await client.query('SELECT * FROM emails WHERE id = $1', [emailId]);
       if (emailRes.rows.length === 0) return;
       const email = emailRes.rows[0];
@@ -53,7 +52,7 @@ export async function startEmailProcessor() {
       const threadRes = await client.query('SELECT subject, body, sender, timestamp FROM emails WHERE thread_id = $1 ORDER BY timestamp ASC', [email.thread_id]);
       const threadHistory = threadRes.rows.map(r => `[${new Date(r.timestamp).toISOString()}] From ${r.sender}: ${r.subject}\n${r.body}`).join('\n\n---\n\n');
 
-      // 2. RAG - Get relevant knowledge chunks
+      // Get relevant knowledge chunks
       const embedRes = await ai.models.embedContent({
         model: "gemini-embedding-001",
         contents: email.body,
@@ -101,8 +100,6 @@ export async function startEmailProcessor() {
       let requires_human = parsed.requires_human;
       let escalation_reason = parsed.escalation_reason || null;
 
-      // 4a. SATT spec: confidence < 0.70 must automatically flag for human review,
-      // regardless of any other signal. Enforced here in code, not just in the prompt.
       if (parsed.confidence < 0.70) {
         requires_human = true;
         const msg = `Low confidence classification (${parsed.confidence.toFixed(2)} < 0.70 threshold)`;
@@ -110,7 +107,7 @@ export async function startEmailProcessor() {
         console.log(`[Worker] ⚠️ Low confidence for ${email.message_id}: ${parsed.confidence.toFixed(2)}`);
       }
 
-      // 4b. Layer 3: Sentiment Trend Tracking (Check last 2 emails, plus this current one = 3)
+      //Sentiment Trend Tracking (last 2 + this one)
       const sentimentHistoryRes = await client.query(`
         SELECT sentiment FROM emails 
         WHERE sender = $1 AND id != $2 AND sentiment IS NOT NULL
@@ -126,9 +123,7 @@ export async function startEmailProcessor() {
         console.log(`[Worker] 🚨 Escalation Triggered for ${email.sender}: ${msg}`);
       }
 
-      // 5. Update Database
-      // 'Replied' is the correct email_status ENUM value for auto-resolved emails.
-      // 'Escalated' is used when requires_human = true (set by LLM, confidence gate, or sentiment trend).
+      // db update
       const finalStatus = requires_human ? 'Escalated' : 'Replied';
       await client.query(`
         UPDATE emails 
@@ -144,15 +139,11 @@ export async function startEmailProcessor() {
 
       console.log(`[Worker] ✅ Classified ${email.message_id} → Category: ${parsed.category}, Sentiment: ${parsed.sentiment}, Status: ${finalStatus}`);
 
-      // ── Phase 5: Run the ReAct agent loop ──────────────────────────────────
-      // The agent takes the classified email and autonomously decides what action
-      // to take: send auto-reply, escalate, flag legal, create ticket, etc.
-      // Agent errors are caught separately — classification is already persisted.
+      // react loop
       try {
         await runAgent(email.id, false);
       } catch (agentErr) {
         console.error(`[Worker] ❌ Agent loop failed for ${email.message_id}:`, agentErr.message);
-        // Don't rethrow — classification is done, job is complete
       }
 
     } catch (e) {

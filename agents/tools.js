@@ -327,7 +327,7 @@ export const TOOLS = {
   },
 };
 
-// Human-readable tool menu injected into every agent prompt iteration
+// getToolMenu kept for debugging / documentation purposes
 export function getToolMenu() {
   return Object.entries(TOOLS)
     .map(([name, t]) => {
@@ -338,3 +338,175 @@ export function getToolMenu() {
     })
     .join('\n\n');
 }
+
+// ---------------------------------------------------------------------------
+// TOOL_DECLARATIONS — Gemini FunctionDeclaration objects for native tool use.
+// Passed directly to the model via config: { tools: [{ functionDeclarations }] }.
+// The model was trained on this format and produces properly typed args objects.
+// The fn implementations in TOOLS above are executed by the dispatcher when
+// the model returns a functionCall part.
+// ---------------------------------------------------------------------------
+import { Type } from '@google/genai';
+
+export const TOOL_DECLARATIONS = [
+  {
+    name: 'search_knowledge_base',
+    description:
+      'Search internal policy documents (pricing, SLA, refund, API docs, compliance FAQ, escalation matrix) via RAG. Returns top-3 relevant chunks with source document names and similarity scores. Always call this before drafting any reply.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        query: {
+          type: Type.STRING,
+          description: 'Search query, e.g. "refund policy 14 days" or "SLA credit calculation formula"',
+        },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'get_thread_history',
+    description:
+      'Retrieve the complete email thread for a sender, ordered by timestamp ascending. Shows sentiment, status, and whether a reply was sent per email. Use to understand escalation patterns and unanswered emails.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        sender_email: {
+          type: Type.STRING,
+          description: "The sender's email address",
+        },
+      },
+      required: ['sender_email'],
+    },
+  },
+  {
+    name: 'get_contact_profile',
+    description:
+      'Fetch CRM profile: name, company, VIP/Active/Churned/Blocked status, subscription tier, account value, churn risk score (0–1), open thread count.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        email: { type: Type.STRING, description: 'Contact email address' },
+      },
+      required: ['email'],
+    },
+  },
+  {
+    name: 'check_account_status',
+    description: 'Check billing status (Current/Overdue/Suspended), subscription tier, and overdue invoice amount for a contact.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        email: { type: Type.STRING, description: 'Contact email address' },
+      },
+      required: ['email'],
+    },
+  },
+  {
+    name: 'draft_reply',
+    description:
+      'Generate a contextual, policy-grounded customer reply. Requires prior search_knowledge_base call for policy refs. Returns the draft reply text.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        context: {
+          type: Type.STRING,
+          description: 'Situation summary and what the reply must address',
+        },
+        tone: {
+          type: Type.STRING,
+          description: 'Reply tone: empathetic | professional | urgent',
+        },
+        policy_refs: {
+          type: Type.STRING,
+          description: 'Exact policy details to cite inline, e.g. "refund_policy.md: no refunds after 14 days; exceptions via support ticket"',
+        },
+      },
+      required: ['context', 'tone', 'policy_refs'],
+    },
+  },
+  {
+    name: 'escalate_to_human',
+    description:
+      'Route email to a human agent with a pre-filled escalation brief. Sets status to Escalated and writes to audit_log. Use for unresolved complex cases, VIP accounts, or when requires_human is already true.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        reason: {
+          type: Type.STRING,
+          description: 'Detailed reason including key context the human agent needs to act immediately',
+        },
+        priority: {
+          type: Type.STRING,
+          description: 'Escalation priority: Low | Medium | High | Critical',
+        },
+      },
+      required: ['reason', 'priority'],
+    },
+  },
+  {
+    name: 'flag_for_legal',
+    description:
+      'Route legal or compliance issues to the legal team per the escalation matrix. Sets email category to Legal. Use for: legal threats, GDPR Article 20 requests, cease and desist, data breach claims, ransomware.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        issue_type: {
+          type: Type.STRING,
+          description: 'e.g. "GDPR Article 20 data portability request", "legal threat", "cease and desist", "ransomware extortion"',
+        },
+      },
+      required: ['issue_type'],
+    },
+  },
+  {
+    name: 'create_internal_ticket',
+    description: 'Create an internal support or engineering ticket for team follow-up. Writes a Ticket-Created action row.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        title: { type: Type.STRING, description: 'Short descriptive ticket title' },
+        body: {
+          type: Type.STRING,
+          description: 'Full ticket description with context and required actions',
+        },
+        assignee: {
+          type: Type.STRING,
+          description: 'Team or person: "compliance-team" | "engineering" | "support-lead" | "legal-team"',
+        },
+      },
+      required: ['title', 'body', 'assignee'],
+    },
+  },
+  {
+    name: 'scrape_public_sentiment',
+    description:
+      'Fetch public reputation data (G2/Trustpilot scores, recent review themes) for a company. Returns cached or stub data. Use for reputation-sensitive emails: churn threats, public review threats, PR concerns.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        company_name: {
+          type: Type.STRING,
+          description: 'Company name to look up, e.g. "RetailCo"',
+        },
+      },
+      required: ['company_name'],
+    },
+  },
+  {
+    name: 'send_auto_reply',
+    description:
+      'Send an approved auto-reply to the customer. BLOCKED by dispatcher for Critical urgency — use escalate_to_human instead. Only call after draft_reply has produced the content.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        reply_content: {
+          type: Type.STRING,
+          description: 'The complete reply text to send to the customer',
+        },
+      },
+      required: ['reply_content'],
+    },
+  },
+];
+
