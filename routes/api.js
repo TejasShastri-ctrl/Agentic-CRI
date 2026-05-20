@@ -67,12 +67,19 @@ router.post('/ingest', async (req, res) => {
       const internalThreadId = threadRes.rows[0].id;
 
       // 5. Deduplication & Insert
+      // Spam and security-flagged emails are inserted with status 'Ignored' — they
+      // never reach the LLM or agent (pre-filter gate). All three boolean flags are
+      // persisted here so the DB reflects the heuristic layer's decisions.
+      const insertedStatus =
+        preFilterResult.is_spam || preFilterResult.security_flag ? 'Ignored' : 'Received';
+
       try {
         const emailRes = await client.query(`
           INSERT INTO emails (
-            thread_id, message_id, sender, subject, body, timestamp, 
+            thread_id, message_id, sender, subject, body, timestamp,
+            is_spam, is_internal, is_security_flagged,
             urgency, requires_human, status
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'Received')
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
           RETURNING id
         `, [
           parsed.thread_id,
@@ -81,8 +88,12 @@ router.post('/ingest', async (req, res) => {
           parsed.subject,
           cleanBody,
           parsed.timestamp,
+          preFilterResult.is_spam,
+          preFilterResult.is_internal,
+          preFilterResult.security_flag,
           preFilterResult.initial_urgency,
-          preFilterResult.requires_human
+          preFilterResult.requires_human,
+          insertedStatus,
         ]);
 
         emailId = emailRes.rows[0].id;
@@ -92,6 +103,7 @@ router.post('/ingest', async (req, res) => {
           await client.query('ROLLBACK');
           return res.status(200).json({
             status: 'success',
+            deduplicated: true,
             message: 'Email already processed (idempotent)',
             job_id: null
           });
@@ -107,10 +119,12 @@ router.post('/ingest', async (req, res) => {
       client.release();
     }
 
-    //!! priority queue using pg-boss
+    // Enqueue for classification only if not spam, not internal, and not a security threat.
+    // Security-flagged emails are already gated at the DB level (status = 'Ignored') and
+    // must NEVER reach the LLM or auto-reply path.
     let jobId = null;
-    if (!preFilterResult.is_spam && !preFilterResult.is_internal) {
-      // High priority for security/critical
+    if (!preFilterResult.is_spam && !preFilterResult.is_internal && !preFilterResult.security_flag) {
+      // Higher pg-boss priority for urgent (non-security) emails
       const priority = preFilterResult.initial_urgency === 'Critical' ? 100 : 0;
       jobId = await boss.send('email-classification', { emailId: emailId }, { priority });
     }
