@@ -1,8 +1,20 @@
 // heuristic pre filtering logic
+// Keywords aligned with SATT.pdf Component 2 Layer 1 requirements.
+// SECURITY_KEYWORDS include BTC/bitcoin variants to catch msg_038 ("Send 2 BTC or we publish data").
 
-const SPAM_KEYWORDS = ['seo', 'nigerian prince', 'buy followers', 'guaranteed traffic', 'viagra'];
-const URGENT_KEYWORDS = ['urgent', 'p0', 'legal', 'cease and desist', 'lawsuit'];
-const SECURITY_KEYWORDS = ['ransomware', 'breach', 'suspicious login', 'hacked', 'stolen data'];
+const SPAM_KEYWORDS = [
+  'seo', 'nigerian prince', 'buy followers', 'guaranteed traffic',
+  'guaranteed rankings', 'viagra', 'wire transfer',
+];
+
+const URGENT_KEYWORDS = [
+  'urgent', 'p0', 'legal', 'cease and desist', 'lawsuit', 'ransomware',
+];
+
+const SECURITY_KEYWORDS = [
+  'ransomware', 'breach', 'suspicious login', 'hacked', 'stolen data',
+  'btc', 'bitcoin', 'cryptocurrency', 'pay or we', 'send or we',
+];
 
 export function runPreFilter(email) {
   const { sender = '', subject = '', body = '' } = email;
