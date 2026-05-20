@@ -3,6 +3,7 @@ import { z } from 'zod';
 import pool from '../services/db.js';
 import boss from '../services/boss.js';
 import { runPreFilter } from '../services/prefilter.js';
+import { runAgent } from '../agents/ReasonAct.js';
 
 const router = express.Router();
 
@@ -47,7 +48,7 @@ router.post('/ingest', async (req, res) => {
     try {
       await client.query('BEGIN');
 
-      // 3.5 Upsert Contact to satisfy threads foreign key
+      // Upsert Contact to satisfy threads foreign key
       await client.query(`
         INSERT INTO contacts (email)
         VALUES ($1)
@@ -66,10 +67,10 @@ router.post('/ingest', async (req, res) => {
 
       const internalThreadId = threadRes.rows[0].id;
 
-      // 5. Deduplication & Insert
-      // Spam and security-flagged emails are inserted with status 'Ignored' — they
-      // never reach the LLM or agent (pre-filter gate). All three boolean flags are
-      // persisted here so the DB reflects the heuristic layer's decisions.
+      // Deduplication & Insert
+      // PREFILTER GATE - Spam and security-flagged emails are inserted with status 'Ignored' so they
+      // never reach the LLM or agent. 
+      // All three boolean flags are persisted here so the DB reflects the heuristic layer's decisions.
       const insertedStatus =
         preFilterResult.is_spam || preFilterResult.security_flag ? 'Ignored' : 'Received';
 
@@ -124,7 +125,7 @@ router.post('/ingest', async (req, res) => {
     // must NEVER reach the LLM or auto-reply path.
     let jobId = null;
     if (!preFilterResult.is_spam && !preFilterResult.is_internal && !preFilterResult.security_flag) {
-      // Higher pg-boss priority for urgent (non-security) emails
+      // for urgent mails, p goes up
       const priority = preFilterResult.initial_urgency === 'Critical' ? 100 : 0;
       jobId = await boss.send('email-classification', { emailId: emailId }, { priority });
     }
@@ -145,6 +146,72 @@ router.post('/ingest', async (req, res) => {
       });
     }
     console.error('Ingestion Error:', err);
+    return res.status(500).json({ error_code: 'INTERNAL_ERROR', message: err.message });
+  }
+});
+
+
+// GET /api/status/:jobId — polling endpoint for pg-boss job state
+router.get('/status/:jobId', async (req, res) => {
+  const { jobId } = req.params;
+  try {
+    // First trying to find the email by job_id (fastest path)
+    const client = await pool.connect();
+    try {
+      const emailRes = await client.query(
+        `SELECT id, message_id, status, category, sentiment, urgency, processed_at
+         FROM emails WHERE job_id = $1`,
+        [jobId]
+      );
+      if (emailRes.rows.length > 0) {
+        return res.json({ job_id: jobId, ...emailRes.rows[0] });
+      }
+    } finally {
+      client.release();
+    }
+    return res.status(404).json({
+      error_code: 'NOT_FOUND',
+      message: `No job found with id: ${jobId}`,
+      details: null,
+    });
+  } catch (err) {
+    console.error('Status check error:', err);
+    return res.status(500).json({ error_code: 'INTERNAL_ERROR', message: err.message });
+  }
+});
+
+// POST /agent/dry-run/:emailId
+// run agent in planning mode
+// full ReAct loop with dryRun=true: tool calls return placeholder strings, nothing is written to the DB. Returns the full reasoning trace.
+router.post('/agent/dry-run/:emailId', async (req, res) => {
+  const { emailId } = req.params;
+  try {
+    const client = await pool.connect();
+    try {
+      const check = await client.query('SELECT id, message_id FROM emails WHERE id = $1', [emailId]);
+      if (check.rows.length === 0) {
+        return res.status(404).json({
+          error_code: 'NOT_FOUND',
+          message: `Email not found: ${emailId}`,
+          details: null,
+        });
+      }
+    } finally {
+      client.release();
+    }
+
+    const result = await runAgent(emailId, true);
+
+    return res.json({
+      status: 'dry-run-complete',
+      email_id: emailId,
+      steps: result.steps,
+      step_count: result.steps.length,
+      projected_action: result.finalActionType,
+      note: 'No tools were executed. This is a planning trace only.',
+    });
+  } catch (err) {
+    console.error('Dry-run error:', err);
     return res.status(500).json({ error_code: 'INTERNAL_ERROR', message: err.message });
   }
 });

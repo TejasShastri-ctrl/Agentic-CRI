@@ -1,5 +1,3 @@
-//NOTE :- The Re-Act loop inserts a single actions row at the end with the full agent_reasoning_log JSONB — this keeps one clean trace per agent run.
-// agents by themselves would not insert into the actions table
 
 import { GoogleGenAI } from '@google/genai';
 import pool from '../services/db.js';
@@ -8,6 +6,10 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+
+
+//! imp note here :- The Re-Act loop inserts a single actions row at the end with the full agent_reasoning_log JSONB — this keeps one clean trace per agent run.
+// agents by themselves arent allowed to insert the actions table
 
 export const TOOLS = {
 

@@ -1,6 +1,7 @@
 import { GoogleGenAI, Type } from '@google/genai';
 import pool from '../services/db.js';
 import { getBoss } from '../services/boss.js';
+import { runAgent } from '../agents/ReasonAct.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -11,10 +12,10 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const schema = {
   type: Type.OBJECT,
   properties: {
-    category: { type: Type.STRING, enum: ['Complaint','Inquiry','Bug Report','Feature Request','Compliance','Legal','Billing','Spam','Internal','Other'] },
-    sentiment: { type: Type.STRING, enum: ['Positive','Neutral','Negative','Mixed'] },
+    category: { type: Type.STRING, enum: ['Complaint', 'Inquiry', 'Bug Report', 'Feature Request', 'Compliance', 'Legal', 'Billing', 'Spam', 'Internal', 'Other'] },
+    sentiment: { type: Type.STRING, enum: ['Positive', 'Neutral', 'Negative', 'Mixed'] },
     sentiment_score: { type: Type.NUMBER },
-    urgency: { type: Type.STRING, enum: ['Critical','High','Medium','Low'] },
+    urgency: { type: Type.STRING, enum: ['Critical', 'High', 'Medium', 'Low'] },
     requires_human: { type: Type.BOOLEAN },
     escalation_reason: { type: Type.STRING, nullable: true },
     suggested_reply: { type: Type.STRING, nullable: true },
@@ -39,13 +40,13 @@ export async function startEmailProcessor() {
   await boss.work('email-classification', { teamSize: 5, teamConcurrency: 2 }, async (job) => {
     const { emailId } = job.data;
     const client = await pool.connect();
-    
+
     try {
       // 1. Fetch Email and Thread Context
       const emailRes = await client.query('SELECT * FROM emails WHERE id = $1', [emailId]);
       if (emailRes.rows.length === 0) return;
       const email = emailRes.rows[0];
-      
+
       // Update status to processing
       await client.query('UPDATE emails SET status = $1 WHERE id = $2', ['Processing', email.id]);
 
@@ -59,14 +60,14 @@ export async function startEmailProcessor() {
         config: { outputDimensionality: 768 }
       });
       const embedding = embedRes.embeddings[0].values;
-      
+
       const ragRes = await client.query(`
         SELECT chunk_text, source_doc, 1 - (embedding <=> $1) AS similarity
         FROM knowledge_chunks
         ORDER BY embedding <=> $1
         LIMIT 3
       `, [`[${embedding.join(',')}]`]);
-      const ragContext = ragRes.rows.map((r, i) => `--- POLICY DOCUMENT ${i+1} (${r.source_doc}) ---\n${r.chunk_text}`).join('\n\n');
+      const ragContext = ragRes.rows.map((r, i) => `--- POLICY DOCUMENT ${i + 1} (${r.source_doc}) ---\n${r.chunk_text}`).join('\n\n');
 
       // 3. LLM Classification using Structured Outputs
       const prompt = `
@@ -83,7 +84,7 @@ export async function startEmailProcessor() {
       `;
 
       console.log(`[Worker] Classifying Email ID: ${email.message_id}...`);
-      
+
       const aiRes = await ai.models.generateContent({
         model: 'gemini-2.5-flash-lite',
         contents: prompt,
@@ -96,7 +97,7 @@ export async function startEmailProcessor() {
 
       const responseText = typeof aiRes.text === 'function' ? aiRes.text() : aiRes.text;
       const parsed = JSON.parse(responseText);
-      
+
       let requires_human = parsed.requires_human;
       let escalation_reason = parsed.escalation_reason || null;
 
@@ -141,7 +142,18 @@ export async function startEmailProcessor() {
         parsed.confidence, parsed.raw_entities, finalStatus, email.id
       ]);
 
-      console.log(`[Worker] ✅ Finished ${email.message_id} -> Category: ${parsed.category}, Sentiment: ${parsed.sentiment}`);
+      console.log(`[Worker] ✅ Classified ${email.message_id} → Category: ${parsed.category}, Sentiment: ${parsed.sentiment}, Status: ${finalStatus}`);
+
+      // ── Phase 5: Run the ReAct agent loop ──────────────────────────────────
+      // The agent takes the classified email and autonomously decides what action
+      // to take: send auto-reply, escalate, flag legal, create ticket, etc.
+      // Agent errors are caught separately — classification is already persisted.
+      try {
+        await runAgent(email.id, false);
+      } catch (agentErr) {
+        console.error(`[Worker] ❌ Agent loop failed for ${email.message_id}:`, agentErr.message);
+        // Don't rethrow — classification is done, job is complete
+      }
 
     } catch (e) {
       console.error(`[Worker] ❌ Failed to process job ${job.id}`, e);
