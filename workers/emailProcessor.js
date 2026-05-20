@@ -61,12 +61,12 @@ export async function startEmailProcessor() {
       const embedding = embedRes.embeddings[0].values;
       
       const ragRes = await client.query(`
-        SELECT chunk_text, 1 - (embedding <=> $1) AS similarity
+        SELECT chunk_text, source_doc, 1 - (embedding <=> $1) AS similarity
         FROM knowledge_chunks
         ORDER BY embedding <=> $1
         LIMIT 3
       `, [`[${embedding.join(',')}]`]);
-      const ragContext = ragRes.rows.map((r, i) => `--- POLICY DOCUMENT ${i+1} ---\n${r.chunk_text}`).join('\n\n');
+      const ragContext = ragRes.rows.map((r, i) => `--- POLICY DOCUMENT ${i+1} (${r.source_doc}) ---\n${r.chunk_text}`).join('\n\n');
 
       // 3. LLM Classification using Structured Outputs
       const prompt = `
@@ -100,7 +100,16 @@ export async function startEmailProcessor() {
       let requires_human = parsed.requires_human;
       let escalation_reason = parsed.escalation_reason || null;
 
-      // 4. Layer 3: Sentiment Trend Tracking (Check last 2 emails, plus this current one = 3)
+      // 4a. SATT spec: confidence < 0.70 must automatically flag for human review,
+      // regardless of any other signal. Enforced here in code, not just in the prompt.
+      if (parsed.confidence < 0.70) {
+        requires_human = true;
+        const msg = `Low confidence classification (${parsed.confidence.toFixed(2)} < 0.70 threshold)`;
+        escalation_reason = escalation_reason ? `${escalation_reason} | ${msg}` : msg;
+        console.log(`[Worker] ⚠️ Low confidence for ${email.message_id}: ${parsed.confidence.toFixed(2)}`);
+      }
+
+      // 4b. Layer 3: Sentiment Trend Tracking (Check last 2 emails, plus this current one = 3)
       const sentimentHistoryRes = await client.query(`
         SELECT sentiment FROM emails 
         WHERE sender = $1 AND id != $2 AND sentiment IS NOT NULL
@@ -117,7 +126,9 @@ export async function startEmailProcessor() {
       }
 
       // 5. Update Database
-      const finalStatus = requires_human ? 'Escalated' : 'Auto-Replied';
+      // 'Replied' is the correct email_status ENUM value for auto-resolved emails.
+      // 'Escalated' is used when requires_human = true (set by LLM, confidence gate, or sentiment trend).
+      const finalStatus = requires_human ? 'Escalated' : 'Replied';
       await client.query(`
         UPDATE emails 
         SET category = $1, sentiment = $2, sentiment_score = $3, urgency = $4,
