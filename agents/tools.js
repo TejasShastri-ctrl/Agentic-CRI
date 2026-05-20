@@ -1,11 +1,9 @@
 
-import { GoogleGenAI } from '@google/genai';
+import { generateContentWithRetry, embedContentWithRetry } from '../services/aiWrapper.js';
 import pool from '../services/db.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
-
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 
 //! imp note here :- The Re-Act loop inserts a single actions row at the end with the full agent_reasoning_log JSONB — this keeps one clean trace per agent run.
@@ -19,7 +17,7 @@ export const TOOLS = {
     params: { query: 'string — the search query text' },
     needsEmailId: false,
     fn: async ({ query }) => {
-      const embedRes = await ai.models.embedContent({
+      const embedRes = await embedContentWithRetry({
         model: 'gemini-embedding-001',
         contents: query,
         config: { outputDimensionality: 768 },
@@ -154,7 +152,7 @@ export const TOOLS = {
 
         Reply:`;
 
-      const res = await ai.models.generateContent({
+      const res = await generateContentWithRetry({
         model: 'gemini-2.5-flash-lite',
         contents: prompt,
         config: { temperature: 0.3 },

@@ -1,12 +1,10 @@
-import { GoogleGenAI } from '@google/genai';
+import { generateContentWithRetry } from '../services/aiWrapper.js';
 import pool from '../services/db.js';
 import { dispatch } from './dispatcher.js';
 import { TOOL_DECLARATIONS } from './tools.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
-
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 const MAX_STEPS = 6;
 
@@ -53,7 +51,8 @@ export async function runAgent(emailId, dryRun = false) {
           2. send_auto_reply is BLOCKED by the dispatcher for Critical urgency emails.
           3. GDPR / legal emails: call flag_for_legal() AND create_internal_ticket() — never send_auto_reply.
           4. Always call search_knowledge_base before calling draft_reply.
-          5. When you are finished, respond with a plain-text summary of what you did and why — no more tool calls.`;
+          5. IF A TOOL RETURNS AN ERROR (e.g. 503 Unavailable, network error, or invalid arguments), DO NOT proceed with dependent actions like send_auto_reply. You MUST either retry the tool, or call escalate_to_human with the error details. Do not hallucinate successful responses.
+          6. When you are finished, respond with a plain-text summary of what you did and why — no more tool calls.`;
 
   const contents = [{ role: 'user', parts: [{ text: systemPrompt }] }];
 
@@ -68,7 +67,7 @@ export async function runAgent(emailId, dryRun = false) {
   for (let stepNum = 1; stepNum <= MAX_STEPS; stepNum++) {
     let response;
     try {
-      response = await ai.models.generateContent({
+      response = await generateContentWithRetry({
         model: 'gemini-2.5-flash-lite',
         contents,
         config: {

@@ -1,12 +1,11 @@
-import { GoogleGenAI, Type } from '@google/genai';
+import { Type } from '@google/genai';
+import { generateContentWithRetry, embedContentWithRetry } from '../services/aiWrapper.js';
 import pool from '../services/db.js';
 import { getBoss } from '../services/boss.js';
 import { runAgent } from '../agents/ReasonAct.js';
 import dotenv from 'dotenv';
 
 dotenv.config();
-
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 const schema = {
   type: Type.OBJECT,
@@ -53,7 +52,7 @@ export async function startEmailProcessor() {
       const threadHistory = threadRes.rows.map(r => `[${new Date(r.timestamp).toISOString()}] From ${r.sender}: ${r.subject}\n${r.body}`).join('\n\n---\n\n');
 
       // Get relevant knowledge chunks
-      const embedRes = await ai.models.embedContent({
+      const embedRes = await embedContentWithRetry({
         model: "gemini-embedding-001",
         contents: email.body,
         config: { outputDimensionality: 768 }
@@ -84,7 +83,7 @@ export async function startEmailProcessor() {
 
       console.log(`[Worker] Classifying Email ID: ${email.message_id}...`);
 
-      const aiRes = await ai.models.generateContent({
+      const aiRes = await generateContentWithRetry({
         model: 'gemini-2.5-flash-lite',
         contents: prompt,
         config: {
