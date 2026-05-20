@@ -3,6 +3,7 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import apiRouter from './routes/api.js';
 import { getBoss } from './services/boss.js';
+import { startEmailProcessor } from './workers/emailProcessor.js';
 
 dotenv.config();
 
@@ -54,8 +55,9 @@ app.use((err, req, res, _next) => {
 const server = app.listen(PORT, async () => {
   try {
     await getBoss();
+    await startEmailProcessor();
   } catch (err) {
-    console.error('Failed to start pg-boss', err);
+    console.error('Failed to start pg-boss or worker', err);
   }
   console.log(`Server is running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
 });
