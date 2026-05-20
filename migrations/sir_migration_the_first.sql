@@ -279,8 +279,16 @@ CREATE TRIGGER trg_contacts_updated_at
     BEFORE UPDATE ON contacts
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
+CREATE OR REPLACE FUNCTION set_last_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.last_updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
 CREATE TRIGGER trg_threads_last_updated
     BEFORE UPDATE ON threads
-    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+    FOR EACH ROW EXECUTE FUNCTION set_last_updated_at();
 
 COMMIT;
