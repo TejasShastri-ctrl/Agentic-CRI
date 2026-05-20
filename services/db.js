@@ -8,11 +8,11 @@ const { Pool } = pg;
 // const connectionString = process.env.DATABASE_URL;
 
 const pool = new Pool({
-  user: "postgres",
-  host: "localhost",
-  password: "password",
-  database: "mydb",
-  port: 5431
+  user: process.env.DB_USER,
+  host: process.env.DB_HOST,
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_NAME,
+  port: process.env.DB_PORT
 })
 
 pool.on('error', (err) => {

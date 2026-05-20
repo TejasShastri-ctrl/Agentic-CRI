@@ -3,17 +3,17 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-// pg-boss manages its own internal schema (pgboss.*) inside our existing DB.
+// NOTE TS - pg-boss manages its own internal schema (pgboss.*) inside our existing DB.
 // It does NOT need a separate Pool — it creates its own connection using the
 // connection string. We share the same DB, no extra service required.
 const boss = new PgBoss({
-  host: process.env.DB_HOST || 'localhost',
-  port: Number(process.env.DB_PORT) || 5431,
-  user: process.env.DB_USER || 'postgres',
+  host: process.env.DB_HOST,
+  port: Number(process.env.DB_PORT),
+  user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
 
-  // Retention: keep completed jobs for 3 days, failed jobs for 7 days.
+  // keep completed jobs for 3 days, failed jobs for 7 days.
   // Keeps the pgboss.job table from growing unboundedly.
   archiveCompletedAfterSeconds: 60 * 60 * 24 * 3,
   deleteAfterDays: 7,
@@ -23,14 +23,10 @@ boss.on('error', (err) => {
   console.error('[pg-boss] Unexpected error:', err);
 });
 
-// Singleton state — boss.start() is idempotent but should only be called once.
+//!!!!!!!!     singleton singleton
 let started = false;
-
-/**
- * Returns the pg-boss instance, starting it if this is the first call.
- * Call this wherever you need to enqueue or subscribe to jobs.
- * Awaiting it guarantees the boss is ready before use.
- */
+ // Returns the pg-boss instance, making sure it is singleton
+ // would call this wherever you need to enqueue or subscribe to jobs.
 export async function getBoss() {
   if (!started) {
     await boss.start();

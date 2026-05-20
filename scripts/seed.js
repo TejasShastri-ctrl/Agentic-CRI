@@ -1,19 +1,12 @@
-/**
- * scripts/seed.js
- *
- * Seeds the `contacts` table from email-data-advanced.json.
- *
- * What it does:
- *   - Reads all 60 emails from the dataset
- *   - Extracts unique sender emails + names (parsed from the email address itself)
- *   - Classifies each contact with realistic seed data:
- *       · Subscription tier, billing status, account value
- *       · is_vip / status based on known evaluation senders
- *   - Upserts into contacts (safe to re-run — no duplicate rows)
- *
- * Run with:
- *   node scripts/seed.js
- */
+
+// Seed script for `contacts` table from email-data-advanced.json.
+
+//  Overview:
+//  Reads all 60 emails from the dataset -> Extracts unique sender emails + names (parsed from the email address itself)
+//  Classifies each contact with realistic seed data:
+//  Subscription tier, billing status, account value
+//  is_vip / status based on known evaluation sender
+//  Upserts into contacts (safe to rERUN, no duplicate rows)
 
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
@@ -35,10 +28,8 @@ const pool = new Pool({
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// ---------------------------------------------------------------------------
-// Known contact overrides — evaluation senders get realistic, specific data
-// so agent tools like check_account_status() return meaningful values.
-// ---------------------------------------------------------------------------
+// I don't know if this type of seeding is acceptable. Perhaps I will look into making it better once(if) I am done with the core functionalities
+
 const KNOWN_CONTACTS = {
   'alice.smith@greenlight-npo.org': {
     name: 'Alice Smith',
@@ -142,15 +133,7 @@ const KNOWN_CONTACTS = {
   },
 };
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
-/**
- * Derive a human-readable name from an email address.
- * "alice.smith@greenlight-npo.org" → "Alice Smith"
- * Falls back to the local part if no dot pattern found.
- */
 function nameFromEmail(email) {
   const local = email.split('@')[0];
   return local
@@ -160,10 +143,6 @@ function nameFromEmail(email) {
     .join(' ');
 }
 
-/**
- * Derive company name from email domain.
- * "alice@greenlight-npo.org" → "Greenlight-npo"
- */
 function companyFromEmail(email) {
   const domain = email.split('@')[1];
   const name = domain.split('.')[0];
@@ -194,15 +173,15 @@ async function seed() {
       const override = KNOWN_CONTACTS[email.sender] || {};
 
       const contact = {
-        email:             email.sender,
-        name:              override.name              ?? nameFromEmail(email.sender),
-        company:           override.company           ?? companyFromEmail(email.sender),
-        status:            override.status            ?? 'Active',
+        email: email.sender,
+        name: override.name ?? nameFromEmail(email.sender),
+        company: override.company ?? companyFromEmail(email.sender),
+        status: override.status ?? 'Active',
         subscription_tier: override.subscription_tier ?? 'Free',
-        billing_status:    override.billing_status    ?? 'Current',
-        account_value:     override.account_value     ?? null,
-        overdue_amount:    override.overdue_amount     ?? 0.00,
-        churn_risk_score:  override.churn_risk_score  ?? null,
+        billing_status: override.billing_status ?? 'Current',
+        account_value: override.account_value ?? null,
+        overdue_amount: override.overdue_amount ?? 0.00,
+        churn_risk_score: override.churn_risk_score ?? null,
       };
 
       // ON CONFLICT DO NOTHING — safe to re-run the seed script multiple times.
