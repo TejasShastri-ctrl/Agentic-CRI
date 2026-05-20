@@ -1,7 +1,8 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import { testapi } from './routes/api.js';
+import apiRouter from './routes/api.js';
+import { getBoss } from './services/boss.js';
 
 dotenv.config();
 
@@ -11,7 +12,6 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-// Request-logger middleware
 app.use((req, res, next) => {
   const timestamp = new Date().toISOString();
   console.log(`[${timestamp}] ${req.method} ${req.url}`);
@@ -26,7 +26,7 @@ app.get('/', (req, res) => {
   });
 });
 
-app.get('/test', testapi);
+app.use('/api', apiRouter);
 
 
 app.use((req, res, _next) => {
@@ -37,7 +37,7 @@ app.use((req, res, _next) => {
   });
 });
 
-// Universal error handling middleware
+// U-E-H middleware
 app.use((err, req, res, _next) => {
   console.error(err);
   
@@ -51,7 +51,12 @@ app.use((err, req, res, _next) => {
   });
 });
 
-const server = app.listen(PORT, () => {
+const server = app.listen(PORT, async () => {
+  try {
+    await getBoss();
+  } catch (err) {
+    console.error('Failed to start pg-boss', err);
+  }
   console.log(`Server is running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
 });
 
