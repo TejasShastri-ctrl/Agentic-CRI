@@ -68,11 +68,11 @@ router.post('/ingest', async (req, res) => {
       const internalThreadId = threadRes.rows[0].id;
 
       // Deduplication & Insert
-      // PREFILTER GATE - Spam and security-flagged emails are inserted with status 'Ignored' so they
-      // never reach the LLM or agent. 
+      // PREFILTER GATE - Spam emails are inserted with status 'Ignored' so they
+      // never reach the LLM or agent. Security threats MUST reach the LLM for escalation.
       // All three boolean flags are persisted here so the DB reflects the heuristic layer's decisions.
       const insertedStatus =
-        preFilterResult.is_spam || preFilterResult.security_flag ? 'Ignored' : 'Received';
+        preFilterResult.is_spam ? 'Ignored' : 'Received';
 
       try {
         const emailRes = await client.query(`
@@ -120,11 +120,11 @@ router.post('/ingest', async (req, res) => {
       client.release();
     }
 
-    // Enqueue for classification only if not spam, not internal, and not a security threat.
-    // Security-flagged emails are already gated at the DB level (status = 'Ignored') and
-    // must NEVER reach the LLM or auto-reply path.
+    // Enqueue for classification only if not spam and not internal.
+    // Security-flagged emails MUST reach the LLM so the Agent can properly escalate them
+    // to the security team and log the incident per the escalation matrix.
     let jobId = null;
-    if (!preFilterResult.is_spam && !preFilterResult.is_internal && !preFilterResult.security_flag) {
+    if (!preFilterResult.is_spam && !preFilterResult.is_internal) {
       // for urgent mails, p goes up
       const priority = preFilterResult.initial_urgency === 'Critical' ? 100 : 0;
       jobId = await boss.send('email-classification', { emailId: emailId }, { priority });

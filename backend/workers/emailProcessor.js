@@ -88,7 +88,7 @@ export async function startEmailProcessor() {
       If you include a suggested_reply, it MUST reference the specific policy document(s) it is based on by name (e.g. "Per our refund_policy:" or "According to our sla_policy:"). Do not draft a reply that is not grounded in the provided policy documents above.
       
       CRITICAL RULE — Human Requirement:
-      Set requires_human to true ONLY if the email contains legal threats, critical system outages, explicit demands to speak to a manager, or complex billing disputes that cannot be answered via standard policy. General inquiries (like pricing, features, or basic refunds) MUST have requires_human set to false.
+      Set requires_human to true ONLY if the email contains legal threats, critical system outages, security threats (e.g., ransomware), public review threats, explicit demands to speak to a manager, or complex billing disputes that cannot be answered via standard policy. General inquiries (like pricing, features, or basic refunds) MUST have requires_human set to false.
       
       If the user is extremely frustrated or angry, grade the sentiment negatively and ensure appropriate urgency.
       `;

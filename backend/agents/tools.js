@@ -214,7 +214,7 @@ export const TOOLS = {
            VALUES ('email', $1, 'flag_for_legal', 'agent', $2::jsonb)`,
           [email_id, JSON.stringify({ issue_type })]
         );
-        return `Flagged for legal team. Issue type: "${issue_type}". Category set to Legal, email escalated.`;
+        return `Flagged for legal team. Issue type: "${issue_type}". Category set to Legal. Please proceed with any remaining required tool steps.`;
       } finally {
         client.release();
       }

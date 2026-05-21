@@ -53,13 +53,13 @@ export async function runAgent(emailId, dryRun = false, ragContext = null) {
         HARD RULES:
           1. Maximum ${MAX_STEPS} tool calls. Plan your steps accordingly.
           2. send_auto_reply is BLOCKED by the dispatcher for Critical urgency emails.
-          3. GDPR / legal emails (regardless of urgency or Requires Human flag): you MUST execute the following exact sequence: First call flag_for_legal(), then call create_internal_ticket() assigned to compliance-team, then call draft_reply(), and finally call send_auto_reply() with an acknowledgement citing the 30-day statutory window. Do NOT call escalate_to_human for GDPR emails.
-          4. For all other emails: If the email urgency is 'Critical' or 'Requires Human' is true, you MUST gather context and immediately call escalate_to_human(). You cannot simply finish without calling it.
-          5. Use the PRE-FETCHED KNOWLEDGE BASE CONTEXT if available. Only call search_knowledge_base if you need additional specific information.
-          6. IF A TOOL RETURNS AN ERROR, you MUST either retry the tool or call escalate_to_human with the error details. Do not hallucinate successful responses.
-          7. To send a reply, you MUST first call draft_reply() to generate the reply text. IMPORTANT: After draft_reply returns the text, your VERY NEXT action MUST be to call send_auto_reply() with that exact text. Never stop after just drafting!
-          8. NEVER mock or simulate tool output structures in your thought text (e.g., writing lines that look like tool responses/JSON outputs). You must invoke the actual tool function.
-          9. When you are fully finished with all actions (having called send_auto_reply, escalate_to_human, etc.), respond with a final text summary of what you did and why, which will trigger the FINISH action.`;
+          3. KNOWLEDGE BASE SOPs: ALWAYS start by searching the knowledge base (e.g. "escalation matrix", "SLA policy") to determine the exact protocol for high-risk scenarios like legal threats, ransomware, PR crises, GDPR, SLA breaches, etc. You MUST strictly follow the tool sequence defined in the retrieved policy document.
+          4. Standard Escalation: If no specific SOP applies and urgency is 'Critical' or 'Requires Human' is true, MUST call escalate_to_human(). You cannot simply finish without calling it.
+          10. Use the PRE-FETCHED KNOWLEDGE BASE CONTEXT if available. Only call search_knowledge_base if you need additional specific information.
+          11. IF A TOOL RETURNS AN ERROR, you MUST either retry the tool or call escalate_to_human with the error details. Do not hallucinate successful responses.
+          12. To send a reply, you MUST first call draft_reply() to generate the reply text. IMPORTANT: After draft_reply returns the text, your VERY NEXT action MUST be to call send_auto_reply() with that exact text. Never stop after just drafting!
+          13. NEVER mock or simulate tool output structures in your thought text (e.g., writing lines that look like tool responses/JSON outputs). You must invoke the actual tool function.
+          14. When you are fully finished with all actions (having called send_auto_reply, escalate_to_human, etc.), respond with a final text summary of what you did and why, which will trigger the FINISH action.`;
 
   const contents = [{ role: 'user', parts: [{ text: systemPrompt }] }];
 
@@ -98,20 +98,20 @@ export async function runAgent(emailId, dryRun = false, ragContext = null) {
     }
 
     const candidate = response.candidates?.[0];
-    if (!candidate) {
-      console.warn(`[Agent] No candidate returned at step ${stepNum} — stopping`);
-      resolvedCleanly = true;
+    if (!candidate || !candidate.content) {
+      console.warn(`[Agent] No valid content returned at step ${stepNum} — stopping. Reason: ${candidate?.finishReason}`);
+      resolvedCleanly = false;
       break;
     }
 
-    const parts = candidate.content?.parts || [];
+    const parts = candidate.content.parts || [];
 
     const textPart = parts.find((p) => p.text)?.text?.trim() || null;
-    const funcPart = parts.find((p) => p.functionCall) || null;
+    const funcParts = parts.filter((p) => p.functionCall);
 
     contents.push({ role: 'model', parts: candidate.content.parts });
 
-    if (!funcPart) {
+    if (funcParts.length === 0) {
       const summary = textPart || 'Agent completed without further actions.';
       console.log(`[Agent] ✅ Model finished naturally at step ${stepNum}`);
       steps.push({
@@ -126,46 +126,47 @@ export async function runAgent(emailId, dryRun = false, ragContext = null) {
       break;
     }
 
-    // Tool call
-    const { name: toolName, args } = funcPart.functionCall;
-    const thought = textPart || `Calling ${toolName}`;
+    const userParts = [];
 
-    console.log(
-      `[Agent] Step ${stepNum}: ${toolName} — ${thought.substring(0, 80)}${thought.length > 80 ? '...' : ''}`
-    );
+    for (let i = 0; i < funcParts.length; i++) {
+      const funcPart = funcParts[i];
+      const { name: toolName, args } = funcPart.functionCall;
+      const thought = (i === 0 && textPart) ? textPart : `Calling ${toolName}`;
 
+      console.log(
+        `[Agent] Step ${stepNum}.${i+1}: ${toolName} — ${thought.substring(0, 80)}${thought.length > 80 ? '...' : ''}`
+      );
 
+      const result = await dispatch(toolName, args, emailId, email.urgency, dryRun);
 
+      steps.push({
+        step: stepNum,
+        thought,
+        action: toolName,
+        args,
+        observation: result.observation,
+        timestamp: new Date().toISOString(),
+      });
 
+      if (TERMINAL_ACTION_TYPE[toolName]) {
+        finalActionType = TERMINAL_ACTION_TYPE[toolName];
+      }
 
+      if (toolName === 'send_auto_reply' && args.reply_content) {
+        proposedReply = args.reply_content;
+      }
 
-    const result = await dispatch(toolName, args, emailId, email.urgency, dryRun);
-
-    steps.push({
-      step: stepNum,
-      thought,
-      action: toolName,
-      args,
-      observation: result.observation,
-      timestamp: new Date().toISOString(),
-    });
-
-    if (TERMINAL_ACTION_TYPE[toolName]) {
-      finalActionType = TERMINAL_ACTION_TYPE[toolName];
-    }
-
-    if (toolName === 'send_auto_reply' && args.reply_content) {
-      proposedReply = args.reply_content;
-    }
-
-    contents.push({
-      role: 'user',
-      parts: [{
+      userParts.push({
         functionResponse: {
           name: toolName,
           response: { result: result.observation },
         },
-      }],
+      });
+    }
+
+    contents.push({
+      role: 'user',
+      parts: userParts,
     });
 
   }
