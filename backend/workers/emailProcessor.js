@@ -72,7 +72,7 @@ export async function startEmailProcessor() {
       `, [`[${embedding.join(',')}]`]);
       const ragContext = ragRes.rows.map((r, i) => `--- POLICY DOCUMENT ${i + 1} (${r.source_doc}) ---\n${r.chunk_text}`).join('\n\n');
 
-      // 3. LLM Classification using Structured Outputs
+      // LLM Classification using Structured Outputs
       const prompt = `
       You are an elite AI assistant classifying customer support emails for an Agentic CRM.
       
@@ -86,6 +86,9 @@ export async function startEmailProcessor() {
       
       CRITICAL RULE — Policy Citation:
       If you include a suggested_reply, it MUST reference the specific policy document(s) it is based on by name (e.g. "Per our refund_policy:" or "According to our sla_policy:"). Do not draft a reply that is not grounded in the provided policy documents above.
+      
+      CRITICAL RULE — Human Requirement:
+      Set requires_human to true ONLY if the email contains legal threats, critical system outages, explicit demands to speak to a manager, or complex billing disputes that cannot be answered via standard policy. General inquiries (like pricing, features, or basic refunds) MUST have requires_human set to false.
       
       If the user is extremely frustrated or angry, grade the sentiment negatively and ensure appropriate urgency.
       `;

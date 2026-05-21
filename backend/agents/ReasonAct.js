@@ -53,11 +53,11 @@ export async function runAgent(emailId, dryRun = false, ragContext = null) {
         HARD RULES:
           1. Maximum ${MAX_STEPS} tool calls. Plan your steps accordingly.
           2. send_auto_reply is BLOCKED by the dispatcher for Critical urgency emails.
-          3. GDPR / legal emails: you MUST call flag_for_legal(), call create_internal_ticket() to compliance-team, AND draft/send a specific auto-acknowledgement reply citing the 30-day statutory window (do not send a generic reply).
-          4. If the email urgency is 'Critical' or 'Requires Human' is true, you MUST gather context and immediately call escalate_to_human(). You cannot simply finish without calling it.
+          3. GDPR / legal emails (regardless of urgency or Requires Human flag): you MUST execute the following exact sequence: First call flag_for_legal(), then call create_internal_ticket() assigned to compliance-team, then call draft_reply(), and finally call send_auto_reply() with an acknowledgement citing the 30-day statutory window. Do NOT call escalate_to_human for GDPR emails.
+          4. For all other emails: If the email urgency is 'Critical' or 'Requires Human' is true, you MUST gather context and immediately call escalate_to_human(). You cannot simply finish without calling it.
           5. Use the PRE-FETCHED KNOWLEDGE BASE CONTEXT if available. Only call search_knowledge_base if you need additional specific information.
           6. IF A TOOL RETURNS AN ERROR, you MUST either retry the tool or call escalate_to_human with the error details. Do not hallucinate successful responses.
-          7. To send a reply, you MUST first call draft_reply() to generate the reply text, and then you MUST call send_auto_reply() with that exact reply text. A draft is NOT sent automatically; you must call send_auto_reply() to actually send/commit it.
+          7. To send a reply, you MUST first call draft_reply() to generate the reply text. IMPORTANT: After draft_reply returns the text, your VERY NEXT action MUST be to call send_auto_reply() with that exact text. Never stop after just drafting!
           8. NEVER mock or simulate tool output structures in your thought text (e.g., writing lines that look like tool responses/JSON outputs). You must invoke the actual tool function.
           9. When you are fully finished with all actions (having called send_auto_reply, escalate_to_human, etc.), respond with a final text summary of what you did and why, which will trigger the FINISH action.`;
 
@@ -234,16 +234,18 @@ export async function runAgent(emailId, dryRun = false, ragContext = null) {
   if (!dryRun) {
     const logClient = await pool.connect();
     try {
+      const isApproved = (finalActionType === 'Auto-Reply');
       await logClient.query(
         `INSERT INTO actions
            (email_id, thread_id, action_type, agent_reasoning_log, proposed_content, is_approved)
-         VALUES ($1, $2, $3, $4::jsonb, $5, false)`,
+         VALUES ($1, $2, $3, $4::jsonb, $5, $6)`,
         [
           emailId,
           email.thread_id,
           finalActionType,
           JSON.stringify(steps),
           proposedReply,
+          isApproved,
         ]
       );
     } catch (err) {
