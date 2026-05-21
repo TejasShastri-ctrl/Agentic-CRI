@@ -53,9 +53,22 @@ export async function runAgent(emailId, dryRun = false, ragContext = null) {
         HARD RULES:
           1. Maximum ${MAX_STEPS} tool calls. Plan your steps accordingly.
           2. send_auto_reply is BLOCKED by the dispatcher for Critical urgency emails.
-          3. KNOWLEDGE BASE SOPs: ALWAYS start by searching the knowledge base (e.g. "escalation matrix", "SLA policy") to determine the exact protocol for high-risk scenarios like legal threats, ransomware, PR crises, GDPR, SLA breaches, etc. You MUST strictly follow the tool sequence defined in the retrieved policy document.
-          4. Standard Escalation: If no specific SOP applies and urgency is 'Critical' or 'Requires Human' is true, MUST call escalate_to_human(). You cannot simply finish without calling it.
-          10. Use the PRE-FETCHED KNOWLEDGE BASE CONTEXT if available. Only call search_knowledge_base if you need additional specific information.
+          3. GDPR / Legal Data Portability Requests (e.g. "GDPR Article 20", "right to portability", "data export"):
+             MUST execute this EXACT sequence → flag_for_legal(issue_type: "GDPR Request") → create_internal_ticket(assignee: "compliance-team") → draft_reply() citing the 30-day statutory window → send_auto_reply().
+             Do NOT call escalate_to_human for GDPR unless a tool fails.
+          4. Ransomware / Security Extortion (e.g. "Send 2 BTC", "we have your data", "pay or we publish"):
+             MUST execute this EXACT sequence → flag_for_legal(issue_type: "ransomware/security") → create_internal_ticket(title: "Security Threat", assignee: "security-team") → escalate_to_human(priority: "Critical").
+             NEVER call draft_reply or send_auto_reply. Any reply to an attacker is strictly forbidden.
+          5. Reputation Crisis / Public Review Threats (e.g. "post on Trustpilot", "G2 review", "Twitter/X", or 3+ unanswered emails with churn threat):
+             MUST execute this EXACT sequence → scrape_public_sentiment(company_name) → draft_reply() offering a retention offer from the refund policy → escalate_to_human(priority: "High").
+          6. Chatbot Misinformation / Discrepancy (e.g. "your chatbot told me", "your AI said", conflicting info from our own system):
+             MUST execute this EXACT sequence → search_knowledge_base() for the actual policy → draft_reply() acknowledging the discrepancy WITHOUT admitting legal liability → escalate_to_human(priority: "High") outlining chatbot vs actual policy.
+          7. SLA Breach / Outage Escalations (e.g. P0, "production down", "legal team involved", SLA credit claims):
+             MUST execute this EXACT sequence → get_thread_history() → check_account_status() → search_knowledge_base() for SLA credit obligations → flag_for_legal() if a legal threat is present → draft_reply() citing SLA credit policy → escalate_to_human(priority: "Critical").
+          8. Conflicting Thread Signals / Complex Billing (e.g. pro-rata billing, mid-cycle upgrades, pricing across multiple emails):
+             MUST call get_thread_history() to read the full conversation context BEFORE drafting any billing or pricing reply.
+          9. Standard Escalation: For any other email where urgency is 'Critical' or 'Requires Human' is true, MUST call escalate_to_human(). You cannot simply finish without calling it.
+          10. Use the PRE-FETCHED KNOWLEDGE BASE CONTEXT if available. Only call search_knowledge_base if you need additional specific information not in the pre-fetched context.
           11. IF A TOOL RETURNS AN ERROR, you MUST either retry the tool or call escalate_to_human with the error details. Do not hallucinate successful responses.
           12. To send a reply, you MUST first call draft_reply() to generate the reply text. IMPORTANT: After draft_reply returns the text, your VERY NEXT action MUST be to call send_auto_reply() with that exact text. Never stop after just drafting!
           13. NEVER mock or simulate tool output structures in your thought text (e.g., writing lines that look like tool responses/JSON outputs). You must invoke the actual tool function.
@@ -137,7 +150,7 @@ export async function runAgent(emailId, dryRun = false, ragContext = null) {
         `[Agent] Step ${stepNum}.${i+1}: ${toolName} — ${thought.substring(0, 80)}${thought.length > 80 ? '...' : ''}`
       );
 
-      const result = await dispatch(toolName, args, emailId, email.urgency, dryRun);
+      const result = await dispatch(toolName, args, emailId, email.urgency, dryRun, steps);
 
       steps.push({
         step: stepNum,
@@ -182,7 +195,8 @@ export async function runAgent(emailId, dryRun = false, ragContext = null) {
         { reason: autoReason, priority: 'High' },
         emailId,
         email.urgency,
-        false
+        false,
+        steps
       );
     }
 
@@ -200,6 +214,7 @@ export async function runAgent(emailId, dryRun = false, ragContext = null) {
   // Programmatic fallback safeguard: If the model finished naturally (resolvedCleanly === true)
   // but did not take any terminal action (finalActionType remains 'Ignored') even though
   // the email requires human attention or is critical.
+  // Exception: if the agent completed a GDPR auto-reply (Auto-Reply), do not force-escalate.
   if (resolvedCleanly && finalActionType === 'Ignored') {
     if (email.urgency === 'Critical' || email.requires_human) {
       const autoEscalateReason = `Auto-escalation fallback: Agent finished naturally without calling escalate_to_human despite 'Critical' urgency or 'Requires Human' flag being set.`;
@@ -211,7 +226,8 @@ export async function runAgent(emailId, dryRun = false, ragContext = null) {
           { reason: autoEscalateReason, priority: email.urgency === 'Critical' ? 'Critical' : 'High' },
           emailId,
           email.urgency,
-          false
+          false,
+          steps
         );
       }
 
