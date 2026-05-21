@@ -66,7 +66,7 @@ export const TOOLS = {
         return res.rows
           .map(
             (r) =>
-              `[${new Date(r.timestamp).toISOString()}] ${r.subject} | Status: ${r.status} | Sentiment: ${r.sentiment || 'unclassified'}\n${(r.body || '').substring(0, 400)}${(r.body || '').length > 400 ? '...' : ''}${r.suggested_reply ? `\n  → Reply sent: ${r.suggested_reply.substring(0, 100)}...` : '\n  → No reply sent'}`
+              `[${new Date(r.timestamp).toISOString()}] ${r.subject} | Status: ${r.status} | Sentiment: ${r.sentiment || 'unclassified'}\n${(r.body || '').substring(0, 150)}${(r.body || '').length > 150 ? '...' : ''}${r.suggested_reply ? `\n  → Reply sent: ${r.suggested_reply.substring(0, 100)}...` : '\n  → No reply sent'}`
           )
           .join('\n\n---\n\n');
       } finally {

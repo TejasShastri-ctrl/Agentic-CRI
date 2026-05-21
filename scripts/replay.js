@@ -6,7 +6,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const dataPath = path.join(__dirname, '..', 'email-data-advanced.json');
 
 const API_URL = process.env.API_URL || 'http://localhost:3000/api/ingest';
-const DELAY_MS = parseInt(process.env.REPLAY_DELAY_MS || '20000', 10);
+const DELAY_MS = parseInt(process.env.REPLAY_DELAY_MS || '30000', 10);
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));

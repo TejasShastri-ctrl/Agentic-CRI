@@ -15,7 +15,7 @@ const TERMINAL_ACTION_TYPE = {
   create_internal_ticket: 'Ticket-Created',
 };
 
-export async function runAgent(emailId, dryRun = false) {
+export async function runAgent(emailId, dryRun = false, ragContext = null) {
 
   const client = await pool.connect();
   let email;
@@ -46,13 +46,16 @@ export async function runAgent(emailId, dryRun = false) {
           Requires Human   : ${email.requires_human}
           Escalation Reason: ${email.escalation_reason || 'none'}
 
+        ${ragContext ? `\n        [PRE-FETCHED KNOWLEDGE BASE CONTEXT]\n        ${ragContext}\n` : ''}
+
         HARD RULES (enforced in code — your output cannot override these):
           1. Maximum ${MAX_STEPS} tool calls. The system enforces this — plan your steps accordingly.
           2. send_auto_reply is BLOCKED by the dispatcher for Critical urgency emails.
           3. GDPR / legal emails: call flag_for_legal() AND create_internal_ticket() — never send_auto_reply.
-          4. Always call search_knowledge_base before calling draft_reply.
-          5. IF A TOOL RETURNS AN ERROR (e.g. 503 Unavailable, network error, or invalid arguments), DO NOT proceed with dependent actions like send_auto_reply. You MUST either retry the tool, or call escalate_to_human with the error details. Do not hallucinate successful responses.
-          6. When you are finished, respond with a plain-text summary of what you did and why — no more tool calls.`;
+          4. If the email urgency is 'Critical' or 'Requires Human' is true, you MUST gather context and immediately call escalate_to_human(). You cannot simply finish.
+          5. Use the PRE-FETCHED KNOWLEDGE BASE CONTEXT if available. Only call search_knowledge_base if you need additional specific information before drafting a reply.
+          6. IF A TOOL RETURNS AN ERROR (e.g. 503 Unavailable, network error, or invalid arguments), DO NOT proceed with dependent actions like send_auto_reply. You MUST either retry the tool, or call escalate_to_human with the error details. Do not hallucinate successful responses.
+          7. When you are finished, respond with a plain-text summary of what you did and why — no more tool calls.`;
 
   const contents = [{ role: 'user', parts: [{ text: systemPrompt }] }];
 

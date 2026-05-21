@@ -140,7 +140,7 @@ export async function startEmailProcessor() {
 
       // react loop
       try {
-        await runAgent(email.id, false);
+        await runAgent(email.id, false, ragContext);
       } catch (agentErr) {
         console.error(`[Worker] ❌ Agent loop failed for ${email.message_id}:`, agentErr.message);
       }
