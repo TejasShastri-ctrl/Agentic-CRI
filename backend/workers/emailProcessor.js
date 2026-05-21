@@ -51,10 +51,15 @@ export async function startEmailProcessor() {
       const threadRes = await client.query('SELECT subject, body, sender, timestamp FROM emails WHERE thread_id = $1 ORDER BY timestamp ASC', [email.thread_id]);
       const threadHistory = threadRes.rows.map(r => `[${new Date(r.timestamp).toISOString()}] From ${r.sender}: ${r.subject}\n${r.body}`).join('\n\n---\n\n');
 
-      // Get relevant knowledge chunks
+      // Thread-aware semantic query for the RAG embedding, compact summary of the thread(subject + 150-char snippet per email)
+      const ragQueryText = [
+        `Subject: ${email.subject}`,
+        ...threadRes.rows.map(r => `[${r.sender}]: ${(r.body || '').substring(0, 150)}`)
+      ].join('\n');
+
       const embedRes = await embedContentWithRetry({
         model: "gemini-embedding-001",
-        contents: email.body,
+        contents: ragQueryText,
         config: { outputDimensionality: 768 }
       });
       const embedding = embedRes.embeddings[0].values;
@@ -78,6 +83,10 @@ export async function startEmailProcessor() {
       ${ragContext}
       
       Task: Analyze the latest email in the thread and classify it. Extract entities, and draft a professional suggested reply based on the policy context.
+      
+      CRITICAL RULE — Policy Citation:
+      If you include a suggested_reply, it MUST reference the specific policy document(s) it is based on by name (e.g. "Per our refund_policy:" or "According to our sla_policy:"). Do not draft a reply that is not grounded in the provided policy documents above.
+      
       If the user is extremely frustrated or angry, grade the sentiment negatively and ensure appropriate urgency.
       `;
 

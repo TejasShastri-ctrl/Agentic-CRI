@@ -13,8 +13,6 @@ const boss = new PgBoss({
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
 
-  // keep completed jobs for 3 days, failed jobs for 7 days.
-  // Keeps the pgboss.job table from growing unboundedly.
   archiveCompletedAfterSeconds: 60 * 60 * 24 * 3,
   deleteAfterDays: 7,
 });
