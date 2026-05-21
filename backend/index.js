@@ -2,6 +2,10 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import apiRouter from './routes/api.js';
+import dashboardRouter from './routes/dashboard.js';
+import analyticsRouter from './routes/analytics.js';
+import contactsRouter from './routes/contacts.js';
+import actionsRouter from './routes/actions.js';
 import { getBoss } from './services/boss.js';
 import { startEmailProcessor } from './workers/emailProcessor.js';
 
@@ -28,6 +32,11 @@ app.get('/', (req, res) => {
 });
 
 app.use('/api', apiRouter);
+app.use('/dashboard', dashboardRouter);
+app.use('/analytics', analyticsRouter);
+app.use('/contacts', contactsRouter);
+// made the same file for actions, drafts and audits for now
+app.use('/', actionsRouter);
 
 
 app.use((req, res, _next) => {
