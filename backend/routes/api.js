@@ -128,6 +128,11 @@ router.post('/ingest', async (req, res) => {
       // for urgent mails, p goes up
       const priority = preFilterResult.initial_urgency === 'Critical' ? 100 : 0;
       jobId = await boss.send('email-classification', { emailId: emailId }, { priority });
+      
+      await pool.query(
+        'UPDATE emails SET job_id = $1 WHERE id = $2',
+        [jobId, emailId]
+      );
     }
 
     return res.status(200).json({

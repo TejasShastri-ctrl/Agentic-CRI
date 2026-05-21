@@ -31,7 +31,9 @@ export async function runAgent(emailId, dryRun = false, ragContext = null) {
     `[Agent] 🤖 Starting — ${email.message_id} | urgency: ${email.urgency} | dryRun: ${dryRun}`
   );
 
-  const systemPrompt = `You are an autonomous AI agent resolving a customer support email for an Agentic CRM platform.
+  const systemPrompt = `You are an autonomous background worker resolving a customer support email for an Agentic CRM platform.
+        You process emails in a queue without human supervision.
+        Do NOT ask questions to the user or ask for permission (e.g., "Would you like me to draft a reply?"). The user cannot hear you or respond during execution. You must act autonomously.
 
         EMAIL TO RESOLVE:
           Message ID : ${email.message_id}
@@ -48,14 +50,16 @@ export async function runAgent(emailId, dryRun = false, ragContext = null) {
 
         ${ragContext ? `\n        [PRE-FETCHED KNOWLEDGE BASE CONTEXT]\n        ${ragContext}\n` : ''}
 
-        HARD RULES (enforced in code — your output cannot override these):
-          1. Maximum ${MAX_STEPS} tool calls. The system enforces this — plan your steps accordingly.
+        HARD RULES:
+          1. Maximum ${MAX_STEPS} tool calls. Plan your steps accordingly.
           2. send_auto_reply is BLOCKED by the dispatcher for Critical urgency emails.
-          3. GDPR / legal emails: call flag_for_legal() AND create_internal_ticket() — never send_auto_reply.
-          4. If the email urgency is 'Critical' or 'Requires Human' is true, you MUST gather context and immediately call escalate_to_human(). You cannot simply finish.
-          5. Use the PRE-FETCHED KNOWLEDGE BASE CONTEXT if available. Only call search_knowledge_base if you need additional specific information before drafting a reply.
-          6. IF A TOOL RETURNS AN ERROR (e.g. 503 Unavailable, network error, or invalid arguments), DO NOT proceed with dependent actions like send_auto_reply. You MUST either retry the tool, or call escalate_to_human with the error details. Do not hallucinate successful responses.
-          7. When you are finished, respond with a plain-text summary of what you did and why — no more tool calls.`;
+          3. GDPR / legal emails: you MUST call flag_for_legal(), call create_internal_ticket() to compliance-team, AND draft/send a specific auto-acknowledgement reply citing the 30-day statutory window (do not send a generic reply).
+          4. If the email urgency is 'Critical' or 'Requires Human' is true, you MUST gather context and immediately call escalate_to_human(). You cannot simply finish without calling it.
+          5. Use the PRE-FETCHED KNOWLEDGE BASE CONTEXT if available. Only call search_knowledge_base if you need additional specific information.
+          6. IF A TOOL RETURNS AN ERROR, you MUST either retry the tool or call escalate_to_human with the error details. Do not hallucinate successful responses.
+          7. To send a reply, you MUST first call draft_reply() to generate the reply text, and then you MUST call send_auto_reply() with that exact reply text. A draft is NOT sent automatically; you must call send_auto_reply() to actually send/commit it.
+          8. NEVER mock or simulate tool output structures in your thought text (e.g., writing lines that look like tool responses/JSON outputs). You must invoke the actual tool function.
+          9. When you are fully finished with all actions (having called send_auto_reply, escalate_to_human, etc.), respond with a final text summary of what you did and why, which will trigger the FINISH action.`;
 
   const contents = [{ role: 'user', parts: [{ text: systemPrompt }] }];
 
@@ -190,6 +194,36 @@ export async function runAgent(emailId, dryRun = false, ragContext = null) {
       timestamp: new Date().toISOString(),
     });
     finalActionType = 'Escalate';
+  }
+
+  // Programmatic fallback safeguard: If the model finished naturally (resolvedCleanly === true)
+  // but did not take any terminal action (finalActionType remains 'Ignored') even though
+  // the email requires human attention or is critical.
+  if (resolvedCleanly && finalActionType === 'Ignored') {
+    if (email.urgency === 'Critical' || email.requires_human) {
+      const autoEscalateReason = `Auto-escalation fallback: Agent finished naturally without calling escalate_to_human despite 'Critical' urgency or 'Requires Human' flag being set.`;
+      console.log(`[Agent] Programmatic fallback escalation triggered for ${email.message_id}`);
+
+      if (!dryRun) {
+        await dispatch(
+          'escalate_to_human',
+          { reason: autoEscalateReason, priority: email.urgency === 'Critical' ? 'Critical' : 'High' },
+          emailId,
+          email.urgency,
+          false
+        );
+      }
+
+      steps.push({
+        step: steps.length + 1,
+        thought: 'Programmatic fallback escalation triggered. Urgency is Critical or Requires Human is true, but the agent finished without calling escalate_to_human.',
+        action: 'escalate_to_human [FALLBACK]',
+        args: { reason: autoEscalateReason, priority: email.urgency === 'Critical' ? 'Critical' : 'High' },
+        observation: 'Auto-escalated via fallback safeguard. Human agent briefed.',
+        timestamp: new Date().toISOString(),
+      });
+      finalActionType = 'Escalate';
+    }
   }
 
   // reasoning log:
